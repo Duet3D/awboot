@@ -7,8 +7,7 @@
 typedef enum {
 	SPI_IO_SINGLE = 0x00,
 	SPI_IO_DUAL_RX,
-	SPI_IO_QUAD_RX,
-	SPI_IO_QUAD_IO,
+	SPI_IO_QUAD_RX
 } spi_io_mode_t;
 
 typedef struct {

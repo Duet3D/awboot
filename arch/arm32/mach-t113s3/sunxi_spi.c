@@ -512,7 +512,6 @@ static void spi_set_io_mode(sunxi_spi_t *spi, spi_io_mode_t mode)
 			bcc |= SPI_BCC_DUAL_RX;
 			break;
 		case SPI_IO_QUAD_RX:
-		case SPI_IO_QUAD_IO:
 			bcc |= SPI_BCC_QUAD_IO;
 			break;
 		case SPI_IO_SINGLE:
@@ -530,9 +529,6 @@ static int spi_transfer(sunxi_spi_t *spi, spi_io_mode_t mode, void *txbuf, uint3
 	spi_set_io_mode(spi, mode);
 
 	switch (mode) {
-		case SPI_IO_QUAD_IO:
-			stxlen = 1; // Only opcode
-			break;
 		case SPI_IO_DUAL_RX:
 		case SPI_IO_QUAD_RX:
 			stxlen = txlen; // Only tx data
@@ -694,15 +690,6 @@ int spi_nand_detect(sunxi_spi_t *spi)
 			spi_nand_wait_while_busy(spi);
 		}
 
-		// Disable buffer mode on Winbond (enable continuous)
-		if (spi->info.id.mfr == (uint8_t)SPI_NAND_MFR_WINBOND) {
-			if ((spi_nand_get_config(spi, CONFIG_ADDR_OTP, &val) == 0) && (val != 0x0)) {
-				val &= ~CONFIG_POS_BUF;
-				spi_nand_set_config(spi, CONFIG_ADDR_OTP, val);
-				spi_nand_wait_while_busy(spi);
-			}
-		}
-
 		if (spi->info.id.mfr == (uint8_t)SPI_NAND_MFR_GIGADEVICE) {
 			if ((spi_nand_get_config(spi, CONFIG_ADDR_OTP, &val) == 0) && !(val & 0x01)) {
 				debug("SPI-NAND: enable Gigadevice Quad mode\r\n");
@@ -746,7 +733,6 @@ uint32_t spi_nand_read(sunxi_spi_t *spi, uint8_t *buf, uint32_t addr, uint32_t r
 	uint32_t n;
 	uint32_t len = 0;
 	uint32_t ca;
-	uint32_t txlen = 4;
 	uint8_t	 tx[6];
 
 	int read_opcode = OPCODE_READ;
@@ -760,10 +746,6 @@ uint32_t spi_nand_read(sunxi_spi_t *spi, uint8_t *buf, uint32_t addr, uint32_t r
 		case SPI_IO_QUAD_RX:
 			read_opcode = OPCODE_FAST_READ_QUAD_O;
 			break;
-		case SPI_IO_QUAD_IO:
-			read_opcode = OPCODE_FAST_READ_QUAD_IO;
-			txlen		= 5; // Quad IO has 2 dummy bytes
-			break;
 
 		default:
 			error("spi_nand: invalid mode\r\n");
@@ -775,43 +757,24 @@ uint32_t spi_nand_read(sunxi_spi_t *spi, uint8_t *buf, uint32_t addr, uint32_t r
 		return -1;
 	}
 
-	if (spi->info.id.mfr == SPI_NAND_MFR_GIGADEVICE) {
-		while (cnt > 0) {
-			ca = address & (spi->info.page_size - 1);
-			n  = cnt > (spi->info.page_size - ca) ? (spi->info.page_size - ca) : cnt;
-
-			spi_nand_load_page(spi, address);
-
-			tx[0] = read_opcode;
-			tx[1] = (uint8_t)(ca >> 8);
-			tx[2] = (uint8_t)(ca >> 0);
-			tx[3] = 0x0;
-
-			spi_transfer(spi, spi->info.mode, tx, 4, buf, n);
-
-			address += n;
-			buf += n;
-			len += n;
-			cnt -= n;
-		}
-	} else {
-		spi_nand_load_page(spi, addr);
-
-		// With Winbond, we use continuous mode which has 1 more dummy
-		// This allows us to not load each page
-		if (spi->info.id.mfr == SPI_NAND_MFR_WINBOND) {
-			txlen++;
-		}
-
+	while (cnt > 0) {
 		ca = address & (spi->info.page_size - 1);
+		n  = cnt > (spi->info.page_size - ca) ? (spi->info.page_size - ca) : cnt;
+
+		spi_nand_load_page(spi, address);
 
 		tx[0] = read_opcode;
 		tx[1] = (uint8_t)(ca >> 8);
 		tx[2] = (uint8_t)(ca >> 0);
 		tx[3] = 0x0;
-		tx[4] = 0x0;
 
-		spi_transfer(spi, spi->info.mode, tx, txlen, buf, rxlen);
+		spi_transfer(spi, spi->info.mode, tx, 4, buf, n);
+
+		address += n;
+		buf += n;
+		len += n;
+		cnt -= n;
 	}
+
 	return len;
 }

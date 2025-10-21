@@ -279,7 +279,7 @@ _boot:
 	arm32_interrupt_disable();
 
 	kernel_entry = (void (*)(int, int, unsigned int))entry_point;
-	kernel_entry(0, ~0, (unsigned int)image.of_dest);
+	kernel_entry(0, 0, (unsigned int)image.of_dest);
 
 	return 0;
 }
