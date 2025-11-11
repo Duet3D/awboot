@@ -22,12 +22,14 @@
 #define CONFIG_KERNEL_FILENAME "zImage"
 #define CONFIG_DTB_FILENAME	   "sun8i-duet3d-duetscreen-linux.dtb"
 
-#define CONFIG_KERNEL_LOAD_ADDR 0x42000000
-#define CONFIG_DTB_LOAD_ADDR   0x41900000
+#define CONFIG_OPTEE_LOAD_ADDR  (SDRAM_BASE + (27 * 1024 * 1024))
+#define CONFIG_DTB_LOAD_ADDR	(SDRAM_BASE + (64 * 1024 * 1024))
+#define CONFIG_KERNEL_LOAD_ADDR (SDRAM_BASE + (72 * 1024 * 1024))
 
 // 128KB erase sectors, so place them starting from 2nd sector
 #define CONFIG_SPINAND_DTB_ADDR	   (128 * 2048)
-#define CONFIG_SPINAND_KERNEL_ADDR (256 * 2048)
+#define CONFIG_SPINAND_OPTEE_ADDR  (256 * 2048)
+#define CONFIG_SPINAND_KERNEL_ADDR (512 * 2048)
 
 extern dram_para_t	 ddr_param;
 extern sunxi_usart_t USART_DBG;

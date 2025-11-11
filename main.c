@@ -169,6 +169,15 @@ int load_spi_nand(sunxi_spi_t *spi, image_info_t *image)
 	time = time_us() - start;
 	info("SPI-NAND: read dt blob of size %u at %.2fMB/S\r\n", size, (f32)(size / time));
 
+	/* get optee and read */
+	size = CONFIG_SPINAND_KERNEL_ADDR - CONFIG_SPINAND_OPTEE_ADDR;
+	debug("SPI-NAND: optee: Copy from 0x%08x to 0x%08lx size:0x%08x\r\n", CONFIG_SPINAND_OPTEE_ADDR,
+		  (uint32_t)image->optee_dest, size);
+	start = time_us();
+	spi_nand_read(spi, image->optee_dest, CONFIG_SPINAND_OPTEE_ADDR, (uint32_t)size);
+	time = time_us() - start;
+	info("SPI-NAND: read optee of size %u at %.2fMB/S\r\n", size, (f32)(size / time));
+
 	/* get kernel size and read */
 	spi_nand_read(spi, image->dest, CONFIG_SPINAND_KERNEL_ADDR, (uint32_t)sizeof(linux_zimage_header_t));
 	hdr = (linux_zimage_header_t *)image->dest;
@@ -199,7 +208,6 @@ int main(void)
 	sunxi_dram_init();
 
 	unsigned int entry_point = 0;
-	void (*kernel_entry)(int zero, int arch, unsigned int params);
 
 #ifdef CONFIG_ENABLE_CPU_FREQ_DUMP
 	sunxi_clk_dump();
@@ -207,8 +215,9 @@ int main(void)
 
 	memset(&image, 0, sizeof(image_info_t));
 
-	image.of_dest = (u8 *)CONFIG_DTB_LOAD_ADDR;
-	image.dest	  = (u8 *)CONFIG_KERNEL_LOAD_ADDR;
+	image.of_dest    = (u8 *)CONFIG_DTB_LOAD_ADDR;
+	image.optee_dest = (u8 *)CONFIG_OPTEE_LOAD_ADDR;
+	image.dest       = (u8 *)CONFIG_KERNEL_LOAD_ADDR;
 
 #if defined(CONFIG_BOOT_SDCARD) || defined(CONFIG_BOOT_MMC)
 
@@ -271,15 +280,61 @@ _boot:
 		fatal("boot setup failed\r\n");
 	}
 
-	info("booting linux...\r\n");
+#ifdef CONFIG_BOOT_SPINAND
+	/* Boot through OP-TEE if loaded from SPI-NAND */
+	info("Initializing OP-TEE...\r\n");
 
+	/* Write the "RAW" signature that OP-TEE checks at offset 0xED
+	 * This is required for hardware validation
+	 * The values come from the working system's OP-TEE binary from a memory dump
+	 */
+	volatile uint8_t *optee_sig = (volatile uint8_t *)((uint32_t)image.optee_dest + 0xED);
+	optee_sig[0]				= 0x52; // 'R'
+	optee_sig[1]				= 0x41; // 'A'
+	optee_sig[2]				= 0x57; // 'W'
+	optee_sig[3]				= 0x89;
+	optee_sig[4]				= 0xE9;
+
+	/* Jump to OP-TEE for initialization */
+	void (*optee_entry)(phys_addr_t dtb);
+	optee_entry = (void (*)(phys_addr_t))image.optee_dest;
+	optee_entry((phys_addr_t)image.of_dest);
+	
+	/* OP-TEE returned! Now we can boot Linux */
+	info("OP-TEE returned successfully!\r\n");
+	info("Booting Linux at 0x%08lx with DTB at 0x%08lx\r\n", (long unsigned int)image.dest, (long unsigned int)image.of_dest);
+		
+	/* Disable MMU/caches before jumping to Linux */
 	arm32_mmu_disable();
 	arm32_dcache_disable();
 	arm32_icache_disable();
 	arm32_interrupt_disable();
-
-	kernel_entry = (void (*)(int, int, unsigned int))entry_point;
+	
+	/* Boot Linux kernel */
+	void (*kernel_entry)(int zero, int arch, unsigned int params);
+	kernel_entry = (void (*)(int, int, unsigned int))image.dest;
 	kernel_entry(0, 0, (unsigned int)image.of_dest);
+	
+	/* Should never reach here */
+	fatal("Linux kernel failed to start\r\n");
+#endif
+
+#if defined(CONFIG_BOOT_SDCARD) || defined(CONFIG_BOOT_MMC)
+	/* Direct boot to Linux (no OP-TEE when booting from SD/MMC) */
+	{
+		void (*kernel_entry)(int zero, int arch, unsigned int params);
+		
+		info("booting linux...\r\n");
+
+		arm32_mmu_disable();
+		arm32_dcache_disable();
+		arm32_icache_disable();
+		arm32_interrupt_disable();
+
+		kernel_entry = (void (*)(int, int, unsigned int))entry_point;
+		kernel_entry(0, 0, (unsigned int)image.of_dest);
+	}
+#endif
 
 	return 0;
 }

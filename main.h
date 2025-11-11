@@ -42,6 +42,8 @@ typedef struct {
 	unsigned int   length;
 	unsigned char *dest;
 
+	unsigned char *optee_dest;
+
 	unsigned int   of_offset;
 	unsigned char *of_dest;
 
