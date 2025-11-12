@@ -27,6 +27,7 @@
  */
 
 #include <arm32.h>
+#include <inttypes.h>
 #include "debug.h"
 #include "main.h"
 
@@ -43,10 +44,10 @@ static void show_regs(struct arm_regs_t *regs)
 {
 	int i;
 
-	error("pc : [<%08lx>] lr : [<%08lx>] cpsr: %08lx\r\n", regs->pc, regs->lr, regs->cpsr);
-	error("sp : %08lx esp : %08lx\r\n", regs->sp, regs->esp);
+	error("pc : [<%08" PRIx32 ">] lr : [<%08" PRIx32 ">] cpsr: %08" PRIx32 "\r\n", regs->pc, regs->lr, regs->cpsr);
+	error("sp : %08" PRIx32 " esp : %08" PRIx32 "\r\n", regs->sp, regs->esp);
 	for (i = 12; i >= 0; i--)
-		error("r%-2d: %08lx\r\n", i, regs->r[i]);
+		error("r%-2d: %08" PRIx32 "\r\n", i, regs->r[i]);
 	error("\r\n");
 }
 
