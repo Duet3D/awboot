@@ -145,10 +145,8 @@ static int of_get_token_nextoffset(void *blob,
 
 	*nextoffset = -1;
 
-	if (offset % 4) {
-		debug("DT: the token offset is not aligned\n");
+	if (offset % 4)
 		return -1;
-	}
 
 	/* Get the token */
 	p = (unsigned int *)of_dt_struct_offset(blob, offset);
@@ -163,15 +161,25 @@ static int of_get_token_nextoffset(void *blob,
 			cell++;
 			offset++;
 		} while (*cell != '\0');
+		/* offset now points one past the last character, need to account for null terminator */
+		offset++; /* Move past the null terminator */
+        /* Align offset to 4 bytes after node name (including null) */
+        offset = OF_ALIGN(offset);
 	} else if (tag == OF_DT_TOKEN_PROP) {
 		/* the property value size */
 		plen = (unsigned int *)of_dt_struct_offset(blob, offset);
-		/* name offset + value size + value */
-		offset += swap_uint32(*plen) + 8;
-	} else if ((tag != OF_DT_TOKEN_NODE_END)
-			&& (tag != OF_DT_TOKEN_NOP)
-			&& (tag != OF_DT_END))
+		unsigned int prop_len = swap_uint32(*plen);
+		/* name offset + value size + value (value must be 4-byte aligned) */
+		offset += OF_ALIGN(prop_len) + 8;
+	} else if (tag == OF_DT_TOKEN_NODE_END) {
+		/* Node end - no additional data */
+	} else if (tag == OF_DT_TOKEN_NOP) {
+		/* NOP - no additional data */
+	} else if (tag == OF_DT_END) {
+		/* End of DTB */
+	} else {
 		return -1;
+	}
 
 	*nextoffset = OF_ALIGN(offset);
 	*token = tag;
@@ -205,6 +213,12 @@ static int of_get_nextnode_offset(void *blob,
 
 			break;
 		} else {
+			if (token == OF_DT_TOKEN_PROP) {
+				/* Property token - continue */
+			} else if (token == OF_DT_TOKEN_NODE_END) {
+				/* Node end token */
+			}
+
 			nodeoffset = next_offset;
 
 			if ((token == OF_DT_TOKEN_PROP)
@@ -215,8 +229,9 @@ static int of_get_nextnode_offset(void *blob,
 
 				if ((*depth) < 0)
 					return -1; /* not found */
-			} else if (token == OF_DT_END)
+			} else if (token == OF_DT_END) {
 				return -1; /* not found*/
+			}
 		}
 	};
 
@@ -252,9 +267,8 @@ static unsigned int safe_strlen(const char *s, unsigned int maxlen)
 
 static int of_get_node_offset(void *blob, char *name, int *offset)
 {
-	int start_offset = 0;
-	int nodeoffset = 0;
-	int nextoffset = 0;
+	int cur_offset = 0;
+	int next_offset = 0;
 	int depth = 0;
 	unsigned int token;
 	unsigned int namelen = safe_strlen(name, 256);
@@ -264,31 +278,38 @@ static int of_get_node_offset(void *blob, char *name, int *offset)
 	if (namelen == 0 || namelen >= 256)
 		return -1;
 
-	/* find the root node*/
-	ret = of_get_token_nextoffset(blob, 0, &start_offset, &token);
-	if (ret)
-		return -1;
+	/* Start from the beginning of the dt_struct */
+	cur_offset = 0;
 
 	while (1) {
-		ret = of_get_nextnode_offset(blob, start_offset,
-					&nodeoffset, &nextoffset, &depth);
+		int token_offset = cur_offset;  /* Save offset before parsing token */
+		ret = of_get_token_nextoffset(blob, cur_offset, &next_offset, &token);
 		if (ret)
 			return ret;
 
-		if (depth < 0)
+		if (token == OF_DT_TOKEN_NODE_BEGIN) {
+			depth++;
+			/* Node name starts at token_offset + 4 (after the 4-byte token) */
+			nodename = (char *)of_dt_struct_offset(blob, token_offset + 4);
+
+			/* Check if this is the node we're looking for */
+			if ((depth == 1 || depth == 2) && safe_strcmp(nodename, name, namelen + 1) == 0 && nodename[namelen] == '\0') {
+				*offset = next_offset;  /* Return offset after the node name */
+				return 0;
+			}
+		} else if (token == OF_DT_TOKEN_NODE_END) {
+			depth--;
+			if (depth < 0)
+				return -1;
+		} else if (token == OF_DT_END) {
 			return -1;
+		}
+		/* PROP and NOP tokens are just skipped */
 
-		nodename = (char *)of_dt_struct_offset(blob,(nodeoffset + 4));
-		/* Safe comparison with length check */
-		if (safe_strcmp(nodename, name, namelen + 1) == 0 && nodename[namelen] == '\0')
-			break;
-
-		start_offset = nextoffset;
+		cur_offset = next_offset;
 	}
 
-	*offset = nextoffset;
-
-	return 0;
+	return -1;
 }
 
 /* -------------------------------------------------------- */
@@ -613,15 +634,46 @@ int fixup_chosen_node(void *blob, char *bootargs)
 int fixup_memory_node(void *blob, unsigned int mem_addr, unsigned int mem_size)
 {
 	int nodeoffset;
-	unsigned int data[2];
 	int valuelen;
 	int ret;
+	char name[32];
 
 	ret = of_get_node_offset(blob, "memory", &nodeoffset);
 	if (ret) {
-		debug("DT: doesn't support add node\n");
-		return ret;
+		// Try memory@<SDRAM_BASE>
+		strcpy(name, "memory@");
+
+		// Append hex representation of SDRAM_BASE
+		char *p = name + 7; // strlen("memory@")
+		unsigned int val = SDRAM_BASE;
+		int i = 0;
+		char temp[16];
+
+		// Convert to hex string
+		if (val == 0) {
+			*p++ = '0';
+		} else {
+			while (val > 0) {
+				int n = val % 16;
+				temp[i++] = (n < 10) ? ('0' + n) : ('a' + n - 10);
+				val /= 16;
+			}
+
+			// Reverse into final position
+			while (i > 0) {
+				*p++ = temp[--i];
+			}
+		}
+		*p = '\0';
+
+		ret = of_get_node_offset(blob, name, &nodeoffset);
+		if (ret) {
+			debug("DT: cannot find memory node\r\n");
+			return ret;
+		}
 	}
+
+	debug("DT: Found memory node, nodeoffset=%d\r\n", nodeoffset);
 
 	/*
 	 * if the property doesn't exit, add it
@@ -636,11 +688,18 @@ int fixup_memory_node(void *blob, unsigned int mem_addr, unsigned int mem_size)
 	}
 
 	/* set "reg" property */
-	valuelen = 8;
-	data[0] = swap_uint32(mem_addr);
-	data[1] = swap_uint32(mem_size);
+	/* The reg property format depends on #address-cells and #size-cells of the parent
+	 * For systems with #address-cells=2 and #size-cells=2, we need 16 bytes
+	 * Format: <addr_high addr_low size_high size_low>
+	 */
+	unsigned int data64[4];
+	data64[0] = 0;  /* address high 32 bits */
+	data64[1] = swap_uint32(mem_addr);  /* address low 32 bits */
+	data64[2] = 0;  /* size high 32 bits */
+	data64[3] = swap_uint32(mem_size);  /* size low 32 bits */
+	valuelen = 16;
 
-	ret = of_set_property(blob, nodeoffset, "reg", data, valuelen);
+	ret = of_set_property(blob, nodeoffset, "reg", data64, valuelen);
 	if (ret) {
 		debug("DT: could not set reg property\n");
 		return ret;
