@@ -14,17 +14,17 @@ DEFINES := -DLOG_LEVEL=$(LOG_LEVEL) -DBUILD_REVISION=$(shell cat .build_revision
 include	arch/arch.mk
 include	lib/fatfs/fatfs.mk
 
-CFLAGS += -mcpu=cortex-a7 -mthumb-interwork -mthumb -mno-unaligned-access -mfpu=neon-vfpv4 -mfloat-abi=hard
-CFLAGS += -ffast-math -ffunction-sections -fdata-sections -Os -std=gnu99 -Wall -Werror -Wno-unused-function -g -MMD $(INCLUDES) $(DEFINES)
-
-ASFLAGS += $(CFLAGS)
-
-LDFLAGS += $(CFLAGS) $(LIBS) -Wl,--gc-sections
-
 STRIP=$(CROSS_COMPILE)-strip
 CC=$(CROSS_COMPILE)-gcc
 SIZE=$(CROSS_COMPILE)-size
 OBJCOPY=$(CROSS_COMPILE)-objcopy
+
+CFLAGS += -mcpu=cortex-a7 -mthumb-interwork -mthumb -mno-unaligned-access -mfpu=neon-vfpv4 -mfloat-abi=hard
+CFLAGS += -ffast-math -ffunction-sections -fdata-sections -Os -std=gnu99 -Wall -Werror -Wno-unused-function -g -MMD $(INCLUDES) $(DEFINES)
+
+ASFLAGS += -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -mthumb-interwork -g $(INCLUDES) $(DEFINES)
+
+LDFLAGS += $(CFLAGS) $(LIBS) -Wl,--gc-sections -nostartfiles
 
 HOSTCC=gcc
 HOSTSTRIP=strip
